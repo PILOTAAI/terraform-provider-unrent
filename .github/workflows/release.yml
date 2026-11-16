@@ -1,0 +1,69 @@
+name: release
+# Publishes a provider release in PILOTAAI/terraform-provider-unrent (docs/terraform.md §6 in PILOTAAI/unrent): at a
+# tag v<version> that sync.yml copied from PILOTAAI/unrent's terraform-provider-v<version>, it tests, builds with
+# GoReleaser (.goreleaser.yml: zips, manifest, SHA256SUMS) and signs SHA256SUMS with the provider's GPG key. The
+# Terraform Registry (webhook) and the OpenTofu Registry (indexes GitHub releases) pick the release up from here.
+#
+# Gate: nothing is built or published until the owner has created the signing key and stored it here as the
+# Actions secrets GPG_PRIVATE_KEY (ASCII-armored, RSA: the Terraform Registry refuses the default ECC keys) and
+# PASSPHRASE. Until then the run fails with that instruction and publishes nothing.
+#
+# This file is managed by OpenTofu from PILOTAAI/unrent (infra/github/terraform-provider.tf): change it there.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write          # create the GitHub release and upload its assets
+    steps:
+      - name: The signing key exists (owner step, docs/terraform.md §6)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          PASSPHRASE: ${{ secrets.PASSPHRASE }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ] || [ -z "$PASSPHRASE" ]; then
+            echo "::error::No provider signing key yet: create an RSA 4096 GPG key, add GPG_PRIVATE_KEY (gpg --armor --export-secret-keys <id>) and PASSPHRASE as Actions secrets of this repository, register the public key in both registries (docs/terraform.md §6), then run this workflow again at ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+      - name: Import the signing key
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+      - name: Build, checksum, sign and publish
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+      - name: The signature verifies with the imported key
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          gpg --batch --verify "dist/terraform-provider-unrent_${v}_SHA256SUMS.sig" "dist/terraform-provider-unrent_${v}_SHA256SUMS"
+          (cd dist && sha256sum -c --ignore-missing "terraform-provider-unrent_${v}_SHA256SUMS")
+          # The manifest is uploaded from the repository root (release.extra_files), listed under its release name.
+          grep -qx "$(sha256sum terraform-registry-manifest.json | cut -d' ' -f1)  terraform-provider-unrent_${v}_manifest.json" "dist/terraform-provider-unrent_${v}_SHA256SUMS"
