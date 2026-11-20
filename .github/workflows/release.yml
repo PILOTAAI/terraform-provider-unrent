@@ -1,6 +1,6 @@
 name: release
 # Publishes a provider release in PILOTAAI/terraform-provider-unrent (docs/terraform.md §6 in PILOTAAI/unrent): at a
-# tag v<version> that sync.yml copied from PILOTAAI/unrent's terraform-provider-v<version>, it tests, builds with
+# tag v<version> that PILOTAAI/unrent's provider-release.yml pushed (its terraform-provider-v<version>), it tests, builds with
 # GoReleaser (.goreleaser.yml: zips, manifest, SHA256SUMS) and signs SHA256SUMS with the provider's GPG key. The
 # Terraform Registry (webhook) and the OpenTofu Registry (indexes GitHub releases) pick the release up from here.
 #
